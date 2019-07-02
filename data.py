@@ -4,21 +4,92 @@ from torchtext import datasets
 import time
 import re
 import spacy
-import os 
+import os
+import _pickle as pickle
 from tqdm import tqdm
+from collections import Counter
+import collections
 
 SOS_WORD = '<SOS>'
 EOS_WORD = '<EOS>'
 PAD_WORD = '<PAD>'
-    
+UNK_WORD = '<UNK>'
+
+class Vocab():
+    def __init__(max_vocab=100000):
+        self.stoi = {}
+        self.itos = []
+        self.itos.append(SOS_WORD)
+        self.itos.append(EOS_WORD)
+        self.itos.append(PAD_WORD)
+        self.itos.append(UNK_WORD)
+        self.max_vocab = max_vocab
+
+    def create_vocab_for_translation(self, all_translation_files_path):
+        v = []
+        f = open(all_translation_files_path, all_translation_files_path, 'r')
+        for lines in f:
+            lines = lines.split()
+            v.extend(lines)
+        v = Counter(v).most_common(self.max_vocab)
+        v = [w for w in v[0]]
+        self.itos.extend(v)
+        self.stoi = collections.defaultdict(lambda:3, {v:k for k,v in enumerate(self.itos)})
+
+
+
+class Preprocess():
+    def __init__(self, train_src_file, train_tgt_file, val_file, vocab_generation_file=None):
+        self.train_src_file = train_src_file
+        self.train_tgt_file = train_tgt_file
+        self.lang2idx = {'en':0, 'fr':1, 'de':2}
+
+        self.vocab = Vocab()
+        if vocab_generation_file is not None:
+            self.vocab.create_vocab_for_translation(vocab_generation_file)
+        self.train_src = []
+        self.train_tgt = []
+        self.train_srclng = []
+        self.train_tgtlng = []
+
+
+
+    def preprocess_train(self):
+        with open(self.train_src_file) as fsrc, open(self.train_tgt_file) as ftgt:
+            for src_line, tgt_line in tqdm(zip(fsrc, ftgt)):
+                src_line, tgt_line = src_line.split(), tgt_line.split()
+                src_seq = [vocab.stoi[w] for w in src_line]
+                tgt_seq = [vocab.stoi[w] for w in tgt_line]
+
+                train_src.append(src_seq)
+                train_tgt.append(tgt_seq)
+
+                self.train_srclng.append(self.lang2idx[src_line[0]])
+                self.train_tgtlng.append(self.lang2idx[tgt_line[0]])
+
+    def preprocess_val(self):
+        with open(self.val_src_file) as fsrc, open(self.val_tgt_file) as ftgt:
+            for src_line, tgt_line in tqdm(zip(fsrc, ftgt)):
+                src_line, tgt_line = src_line.split(), tgt_line.split()
+                src_seq = [vocab.stoi[w] for w in src_line]
+                tgt_seq = [vocab.stoi[w] for w in tgt_line]
+
+                train_src.append(src_seq)
+                train_tgt.append(tgt_seq)
+
+                self.train_srclng.append(self.lang2idx[src_line[0]])
+                self.train_tgtlng.append(self.lang2idx[tgt_line[0]])
+
+
+
 
 class MaxlenTranslationDataset(data.Dataset):
-	# Code modified from 
+	# Code modified from
 	# https://github.com/pytorch/text/blob/master/torchtext/datasets/translation.py
 	# to be able to control the max length of the source and target sentences
 
     def __init__(self, path, exts, fields, max_len=None, **kwargs):
-	
+
         if not isinstance(fields[0], (tuple, list)):
             fields = [('src', fields[0]), ('trg', fields[1])]
 
@@ -30,8 +101,10 @@ class MaxlenTranslationDataset(data.Dataset):
                 src_line, trg_line = src_line.split(' '), trg_line.split(' ')
                 if max_len is not None:
                 	src_line = src_line[:max_len]
+                    src_line = src_line + exts[0].split('.')[1]
                 	src_line = str(' '.join(src_line))
                 	trg_line = trg_line[:max_len]
+                    trg_line = trg_line.insert(exts[1].split('.')[1], 0)
                 	trg_line = str(' '.join(trg_line))
 
                 if src_line != '' and trg_line != '':
@@ -40,14 +113,14 @@ class MaxlenTranslationDataset(data.Dataset):
 
         super(MaxlenTranslationDataset, self).__init__(examples, fields, **kwargs)
 
-	
+
 class DataPreprocessor(object):
 	def __init__(self):
 		self.src_field, self.trg_field = self.generate_fields()
 
 	def preprocess(self, train_path, val_path, train_file, val_file, src_lang, trg_lang, max_len=None):
 		# Generating torchtext dataset class
-		print ("Preprocessing train dataset...")
+		print ("Preprocessing vocab dataset...")
 		train_dataset = self.generate_data(train_path, src_lang, trg_lang, max_len)
 
 		print ("Saving train dataset...")
@@ -65,15 +138,18 @@ class DataPreprocessor(object):
 
 		src_vocab, trg_vocab, src_inv_vocab, trg_inv_vocab = self.generate_vocabs()
 
-		vocabs = {'src_vocab': src_vocab, 'trg_vocab':trg_vocab, 
+		vocabs = {'src_vocab': src_vocab, 'trg_vocab':trg_vocab,
 			  'src_inv_vocab':src_inv_vocab, 'trg_inv_vocab':trg_inv_vocab}
 
 		return train_dataset, val_dataset, vocabs
 
-	def load_data(self, train_file, val_file):
+	def load_data(self, vocab_generation_file, train_file, val_file):
 
 		# Loading saved data
-		train_dataset = torch.load(train_file)
+        vocab_dataset = torch.load(vocab_generation_file)
+		vocab_examples = vocab_dataset['examples']
+
+        train_dataset = torch.load(train_file)
 		train_examples = train_dataset['examples']
 
 		val_dataset = torch.load(val_file)
@@ -81,18 +157,20 @@ class DataPreprocessor(object):
 
 		# Generating torchtext dataset class
 		fields = [('src', self.src_field), ('trg', self.trg_field)]
-		train_dataset = data.Dataset(fields=fields, examples=train_examples)	
-		val_dataset = data.Dataset(fields=fields, examples=val_examples)	
+
+        vocab_dataset = data.Dataset(fields=fields, examples=train_examples)
+        train_dataset = data.Dataset(fields=fields, examples=train_examples)
+		val_dataset = data.Dataset(fields=fields, examples=val_examples)
 
 		# Building field vocabulary
 		self.src_field.build_vocab(train_dataset, max_size=30000)
 		self.trg_field.build_vocab(train_dataset, max_size=30000)
 
 		src_vocab, trg_vocab, src_inv_vocab, trg_inv_vocab = self.generate_vocabs()
-		vocabs = {'src_vocab': src_vocab, 'trg_vocab':trg_vocab, 
+		vocabs = {'src_vocab': src_vocab, 'trg_vocab':trg_vocab,
 			  'src_inv_vocab':src_inv_vocab, 'trg_inv_vocab':trg_inv_vocab}
-		
-		return train_dataset, val_dataset, vocabs	
+
+		return train_dataset, val_dataset, vocabs
 
 
 	def save_data(self, data_file, dataset):
@@ -102,16 +180,14 @@ class DataPreprocessor(object):
 
 		torch.save(dataset, data_file)
 
-	def generate_fields(self):     
-	    src_field = data.Field(tokenize=data.get_tokenizer('spacy'), 
-	                           init_token=SOS_WORD,
+	def generate_fields(self):
+	    src_field = data.Field(tokenize=data.get_tokenizer('spacy'),
 	                           eos_token=EOS_WORD,
 	                           pad_token=PAD_WORD,
 	                           include_lengths=True,
 	                           batch_first=True)
-	    
-	    trg_field = data.Field(tokenize=data.get_tokenizer('spacy'), 
-	                           init_token=SOS_WORD,
+
+	    trg_field = data.Field(tokenize=data.get_tokenizer('spacy'),
 	                           eos_token=EOS_WORD,
 	                           pad_token=PAD_WORD,
 	                           include_lengths=True,
@@ -126,7 +202,7 @@ class DataPreprocessor(object):
 	        path=data_path,
 	        exts=(exts),
 	        fields=(self.src_field, self.trg_field),
-	        max_len=max_len)    
+	        max_len=max_len)
 
 	    return dataset
 
@@ -134,12 +210,9 @@ class DataPreprocessor(object):
 	    # Define string to index vocabs
 	    src_vocab = self.src_field.vocab.stoi
 	    trg_vocab = self.trg_field.vocab.stoi
-	
+
 	    # Define index to string vocabs
 	    src_inv_vocab = self.src_field.vocab.itos
 	    trg_inv_vocab = self.trg_field.vocab.itos
 
 	    return src_vocab, trg_vocab, src_inv_vocab, trg_inv_vocab
-
-
-
