@@ -7,89 +7,56 @@ from utils import *
 from model import *
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, embed_dim, hidden_dim, max_len, trg_soi):
-        super(Decoder, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.max_len = max_len
-        self.vocab_size = vocab_size
-        self.trg_soi = trg_soi
-        
-        self.embed = nn.Embedding(vocab_size, embed_dim)        
-        self.attention = Attention(hidden_dim) 
-        self.decodercell = DecoderCell(embed_dim, hidden_dim)
-        self.dec2word = nn.Linear(hidden_dim, vocab_size)
+    def __init__(self, output_dim, emb_dim, hid_dim, n_layers, dropout=0.5):
+        super().__init__()
 
+        self.emb_dim = emb_dim
+        self.hid_dim = hid_dim
+        self.output_dim = output_dim
+        self.n_layers = n_layers
+        self.dropout = dropout
 
-    def forward(self, enc_h, prev_s, target=None):
-        '''
-        enc_h  : B x S x 2*H 
-        prev_s : B x H
-        '''
+        self.embedding = nn.Embedding(output_dim, emb_dim)
 
-        if target is not None:
-            batch_size, target_len = target.size(0), target.size(1)
-            
-            dec_h = Variable(torch.zeros(batch_size, target_len, self.hidden_dim))
+        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout = dropout)
 
-            if torch.cuda.is_available():
-                dec_h = dec_h.cuda()
+        self.out = nn.Linear(hid_dim, output_dim)
 
-            target = self.embed(target)  
-            for i in range(target_len):
-                ctx = self.attention(enc_h, prev_s)                     
-                prev_s = self.decodercell(target[:, i], prev_s, ctx)       
-                dec_h[:,i,:] = prev_s.unsqueeze(1)
+        self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(hid_dim, output_dim, cutoffs=[1000,10000])
 
-            outputs = self.dec2word(dec_h)
+        self.dropout = nn.Dropout(dropout)
 
-        else:
-            batch_size = enc_h.size(0)
-            target = Variable(torch.LongTensor([self.trg_soi] * batch_size), volatile=True).view(batch_size, 1)
-            outputs = Variable(torch.zeros(batch_size, self.max_len, self.vocab_size))
+    def forward(self, input, hidden, cell):
 
-            if torch.cuda.is_available():
-                target = target.cuda()
-                outputs = outputs.cuda()
-            
-            for i in range(self.max_len):
-                target = self.embed(target).squeeze(1)              
-                ctx = self.attention(enc_h, prev_s)                 
-                prev_s = self.decodercell(target, prev_s, ctx)
-                output = self.dec2word(prev_s) 
-                outputs[:,i,:] = output
-                target = output.topk(1)[1]
-            
-        return outputs
+        #input = [batch size]
+        #hidden = [n layers * n directions, batch size, hid dim]
+        #cell = [n layers * n directions, batch size, hid dim]
 
+        #n directions in the decoder will both always be 1, therefore:
+        #hidden = [n layers, batch size, hid dim]
+        #context = [n layers, batch size, hid dim]
 
-class DecoderCell(nn.Module):
-    def __init__(self, embed_dim, hidden_dim):
-        super(DecoderCell, self).__init__()
+        input = input.unsqueeze(0)
 
-        self.input_weights = nn.Linear(embed_dim, hidden_dim*2)
-        self.hidden_weights = nn.Linear(hidden_dim, hidden_dim*2)
-        self.ctx_weights = nn.Linear(hidden_dim*2, hidden_dim*2)
+        #input = [1, batch size]
 
-        self.input_in = nn.Linear(embed_dim, hidden_dim)
-        self.hidden_in = nn.Linear(hidden_dim, hidden_dim)
-        self.ctx_in = nn.Linear(hidden_dim*2, hidden_dim)
+        embedded = self.dropout(self.embedding(input))
 
+        #embedded = [1, batch size, emb dim]
 
-    def forward(self, trg_word, prev_s, ctx):
-        '''
-        trg_word : B x E
-        prev_s   : B x H 
-        ctx      : B x 2*H
-        '''
-        gates = self.input_weights(trg_word) + self.hidden_weights(prev_s) + self.ctx_weights(ctx)
-        reset_gate, update_gate = gates.chunk(2,1)
+        output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
 
-        reset_gate = F.sigmoid(reset_gate)
-        update_gate = F.sigmoid(update_gate)
+        #output = [sent len, batch size, hid dim * n directions]
+        #hidden = [n layers * n directions, batch size, hid dim]
+        #cell = [n layers * n directions, batch size, hid dim]
 
-        prev_s_tilde = self.input_in(trg_word) + self.hidden_in(prev_s) + self.ctx_in(ctx)
-        prev_s_tilde = F.tanh(prev_s_tilde)
+        #sent len and n directions will always be 1 in the decoder, therefore:
+        #output = [1, batch size, hid dim]
+        #hidden = [n layers, batch size, hid dim]
+        #cell = [n layers, batch size, hid dim]
 
-        prev_s = torch.mul((1-reset_gate), prev_s) + torch.mul(reset_gate, prev_s_tilde)
-        return prev_s
-        
+        # prediction = self.out(output.squeeze(0))
+        prediction = self.adaptive_softmax.log_prob(output.squeeze(0))
+        #prediction = [batch size, output dim]
+
+        return prediction, hidden, cell

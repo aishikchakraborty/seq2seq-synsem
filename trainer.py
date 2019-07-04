@@ -13,26 +13,33 @@ import os
 from logger import Logger
 from tqdm import tqdm
 
-from prepro import *
+from data import *
 from utils import *
 from model.Seq2Seq import Seq2Seq
+from model.Encoder import Encoder
+from model.Decoder import Decoder
 from bleu import *
 
 
 class Trainer(object):
-    def __init__(self, train_loader, val_loader, vocabs, args):
+    def __init__(self, dp, args):
 
         # Language setting
         self.max_len = args.max_len
+        self.args = args
 
         # Data Loader
-        self.train_loader = train_loader
-        self.val_loader = val_loader
+        self.dp = dp
+        if torch.cuda.is_available():
+            if not args.cuda:
+                print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+
+        self.device = torch.device("cuda:" + str(args.gpu) if args.cuda else "cpu")
 
         # Path
         self.data_path = args.data_path
         self.sample_path = os.path.join('./samples/' + args.sample)
-        self.log_path = os.path.join('./logs/' + args.log) 
+        self.log_path = os.path.join('./logs/' + args.log)
 
         if not os.path.exists(self.sample_path): os.makedirs(self.sample_path)
         if not os.path.exists(self.log_path): os.makedirs(self.log_path)
@@ -47,36 +54,43 @@ class Trainer(object):
         # Training setting
         self.batch_size = args.batch_size
         self.num_epoch = args.num_epoch
-        self.iter_per_epoch = len(train_loader)
+        # self.iter_per_epoch = len(train_loader)
 
         # Log
         self.logger = open(self.log_path+'/log.txt','w')
         self.sample = open(self.sample_path+'/sample.txt','w')
         self.tf_log = Logger(self.log_path)
 
-        self.build_model(vocabs)
+        self.build_model(self.dp.vocab)
+
+    def pad_sequences(self, s):
+        pad_token = self.dp.vocab.stoi['<PAD>']
+        # print(s)
+        lengths = [len(s1) for s1 in s]
+        longest_sent = max(lengths)
+        padded_X = np.ones((self.args.batch_size, longest_sent), dtype=np.int64) * pad_token
+        for i, x_len in enumerate(lengths):
+            sequence = s[i]
+            padded_X[i, 0:x_len] = sequence[:x_len]
+        # print(padded_X)
+        return padded_X
 
 
     def build_model(self, vocabs):
         # build dictionaries
-        self.src_vocab = vocabs['src_vocab']
-        self.trg_vocab = vocabs['trg_vocab']
-        self.src_inv_vocab = vocabs['src_inv_vocab']
-        self.trg_inv_vocab = vocabs['trg_inv_vocab']
-        self.trg_soi = self.trg_vocab[SOS_WORD]
+        self.vocab = self.dp.vocab
+        # print(len(self.vocab.itos))
+        self.encoder = Encoder(len(self.vocab.itos), self.embed_dim, self.hidden_dim, self.num_layer)
+        self.decoder = Decoder(len(self.vocab.itos), self.embed_dim, self.hidden_dim, self.num_layer)
 
-        self.src_nword = len(self.src_vocab)
-        self.trg_nword = len(self.trg_vocab)
-        
         # build the model
-        self.model = Seq2Seq(self.src_nword, self.trg_nword, self.num_layer, self.embed_dim, self.hidden_dim, 
-        					  self.max_len, self.trg_soi)
+        self.model = Seq2Seq(self.encoder, self.decoder, self.device, len(self.vocab.itos)).to(self.device)
 
         # set the criterion and optimizer
-        self.criterion = nn.NLLLoss()
+        self.criterion = nn.NLLLoss(ignore_index=self.dp.vocab.stoi['<PAD>'])
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, 1, gamma=0.8)
-        
+
         if torch.cuda.is_available():
             self.model.cuda()
 
@@ -84,129 +98,133 @@ class Trainer(object):
         print (self.criterion)
         print (self.optimizer)
 
+    def count_parameters(self, model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+    def evaluate(self):
+        self.model.eval()
+        start_time = time.time()
+        epoch_loss = 0
+        num_batches = len(self.dp.val_src)//self.args.batch_size
+        epoch_bleu = 0
+        tgt = []
+        pred = []
+        with torch.no_grad():
+            for i in range(num_batches):
+                src = self.pad_sequences(self.dp.val_src[i*self.args.batch_size : (i+1)*self.args.batch_size])
+                tgt = self.pad_sequences(self.dp.val_tgt[i*self.args.batch_size : (i+1)*self.args.batch_size])
+                lng = self.dp.val_srclng[i*self.args.batch_size : (i+1)*self.args.batch_size]
+
+                src = torch.LongTensor(src).to(self.device).transpose(0, 1)
+                tgt = torch.LongTensor(tgt).to(self.device).transpose(0, 1)
+                lng = torch.LongTensor(lng).to(self.device)
+
+                output = self.model(src, tgt, lng)
+                # print(output.size())
+                output_ = output[1:].view(-1, output.shape[-1])
+                # print(tgt[1:, :].size())
+                tgt_ = (tgt[1:, :]).contiguous().view(-1)
+                loss = self.criterion(output_, tgt_)
+                epoch_loss += loss.item()
+
+                pred_sents = []
+                trg_sents = []
+                output = output.transpose(0, 1)
+                tgt = tgt.transpose(0, 1)
+
+                for j in range(self.args.batch_size):
+                    # print(output.size())
+                    pred_sent = self.get_sentence(output[j, :, :].data.cpu().numpy().argmax(axis=-1).tolist(), 'tgt')
+                    trg_sent = self.get_sentence(tgt[j].data.cpu().numpy().tolist(), 'tgt')
+                    pred_sents.append(pred_sent)
+                    trg_sents.append(trg_sent)
+                epoch_bleu += get_bleu(pred_sents, trg_sents)
+            message = "Val loss: %1.3f  val_bleu:  %1.3f , val_ppl: %4.3f elapsed: %1.3f " % (
+            epoch_loss/num_batches, epoch_bleu/num_batches, np.exp(epoch_loss/num_batches), time.time() - start_time)
+            print(message)
+
+        return epoch_bleu/num_batches
 
     def train(self):
         self.best_bleu = .0
-        
-        for epoch in range(self.num_epoch):
+        patience = 0
+        print(f'The model has {self.count_parameters(self.model):,} trainable parameters')
+
+        for epoch in range(1, self.num_epoch):
             #self.scheduler.step()
-            self.train_loss = AverageMeter()
-            self.train_bleu = AverageMeter()
+            self.train_loss = 0
+            self.train_bleu = 0
             start_time = time.time()
 
-            for i, batch in enumerate(tqdm(self.train_loader)):
+            num_batches = len(self.dp.train_src)//self.args.batch_size
+
+            for i in tqdm(range(num_batches)):
                 self.model.train()
 
-                src_input = batch.src[0]; src_length = batch.src[1]
-                trg_input = batch.trg[0][:,:-1]; trg_output=batch.trg[0][:,1:]; trg_length = batch.trg[1]
-                batch_size, trg_len = trg_input.size(0), trg_input.size(1)
+                src = self.pad_sequences(self.dp.train_src[i*self.args.batch_size : (i+1)*self.args.batch_size])
+                tgt = self.pad_sequences(self.dp.train_tgt[i*self.args.batch_size : (i+1)*self.args.batch_size])
+                lng = self.dp.train_srclng[i*self.args.batch_size : (i+1)*self.args.batch_size]
 
-                decoder_logit = self.model(src_input, src_length.tolist(), trg_input)
-                pred = decoder_logit.view(batch_size, trg_len, -1)
+                src = torch.LongTensor(src).to(self.device).transpose(0, 1)
+                tgt = torch.LongTensor(tgt).to(self.device).transpose(0, 1)
+                lng = torch.LongTensor(lng).to(self.device)
+                # print(src.size())
+                # print(tgt.size())
+
+                output = self.model(src, tgt, lng)
+                # print(output.size())
+                output_ = output[1:].view(-1, output.shape[-1])
+                # print(tgt[1:, :].size())
+                tgt_ = (tgt[1:, :]).contiguous().view(-1)
 
                 self.optimizer.zero_grad()
-                loss = self.criterion(decoder_logit, trg_output.contiguous().view(-1))
+                loss = self.criterion(output_, tgt_)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm(self.model.parameters(), self.grad_clip)
-                self.optimizer.step()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
-                # Compute BLEU score and Loss
+                self.optimizer.step()
+                self.train_loss += loss.item()
+
                 pred_sents = []
                 trg_sents = []
-                for j in range(batch_size):
-                    pred_sent = self.get_sentence(tensor2np(pred[j]).argmax(axis=-1), 'trg')
-                    trg_sent = self.get_sentence(tensor2np(trg_output[j]), 'trg')
+                output = output.transpose(0, 1)
+                tgt = tgt.transpose(0, 1)
+
+                for j in range(self.args.batch_size):
+                    pred_sent = self.get_sentence(output[j].data.cpu().numpy().argmax(axis=-1).tolist(), 'tgt')
+                    trg_sent = self.get_sentence(tgt[j].data.cpu().numpy().tolist(), 'tgt')
                     pred_sents.append(pred_sent)
                     trg_sents.append(trg_sent)
                 bleu_value = get_bleu(pred_sents, trg_sents)
-                self.train_bleu.update(bleu_value, 1)
-                self.train_loss.update(loss.data[0], batch_size)
+                self.train_bleu += bleu_value
 
-                if i % 5000 == 0 and i != 0:
-                    self.print_train_result(epoch, i, start_time)
-                    self.print_sample(batch_size, epoch, i, src_input, trg_output, pred)
-                    self.eval(epoch, i)
-                    self.train_loss = AverageMeter()
-                    self.train_bleu = AverageMeter()
+                if i%self.args.log_interval == 0 and i>0:
+                    message = "Train epoch: %d  iter: %d  train loss: %1.3f  train_bleu:  %1.3f , train_ppl: %4.3f elapsed: %1.3f " % (
+                    epoch, i, self.train_loss/self.args.log_interval, self.train_bleu/self.args.log_interval, np.exp(self.train_loss/self.args.log_interval), time.time() - start_time)
+                    print(message)
+                    self.train_loss = 0
+                    self.train_bleu = 0
                     start_time = time.time()
 
-                    # Logging tensorboard
-                    info = {
-                        'epoch': epoch,
-                        'train_iter': i,
-                        'train_loss': self.train_loss.avg,
-                        'train_bleu': self.train_bleu.avg               
-                        }
-                    for tag, value in info.items():
-                        self.tf_log.scalar_summary(tag, value, (epoch * self.iter_per_epoch)+i+1)
-
-            self.print_train_result(epoch, i, start_time)
-            self.print_sample(batch_size, epoch, i, src_input, trg_output, pred)           
-            self.eval(epoch, i)                
-
-
-    def eval(self, epoch, train_iter):
-        self.model.eval()
-        val_bleu = AverageMeter()
-        start_time = time.time()
-        
-        for i, batch in enumerate(tqdm(self.val_loader)):
-            src_input = batch.src[0]; src_length = batch.src[1]
-            trg_input = batch.trg[0][:,:-1]; trg_output=batch.trg[0][:,1:]; trg_length = batch.trg[1]
-            batch_size, trg_len = trg_input.size(0), trg_input.size(1)
-
-            decoder_logit = self.model(src_input, src_length.tolist())
-            pred = decoder_logit.view(batch_size, self.max_len, -1)
-
-            # Compute BLEU score
-            pred_sents = []
-            trg_sents = []            
-            for j in range(batch_size):
-                pred_sent = self.get_sentence(tensor2np(pred[j]).argmax(axis=-1), 'trg')
-                trg_sent = self.get_sentence(tensor2np(trg_output[j]), 'trg')
-                pred_sents.append(pred_sent)
-                trg_sents.append(trg_sent)
-            bleu_value = get_bleu(pred_sents, trg_sents)
-            val_bleu.update(bleu_value, 1)
-               
-        self.print_valid_result(epoch, train_iter, val_bleu.avg, start_time)       
-        self.print_sample(batch_size, epoch, train_iter, src_input, trg_output, pred)
-
-        # Save model if bleu score is higher than the best 
-        if self.best_bleu < val_bleu.avg:
-            self.best_bleu = val_bleu.avg        
-            checkpoint = {
-                    'model': self.model,
-                    'epoch': epoch
-                }
-            torch.save(checkpoint, self.log_path+'/Model_e%d_i%d_%.3f.pt' % (epoch, train_iter, val_bleu.avg))                 
-
-        # Logging tensorboard
-        info = {
-            'epoch': epoch,
-            'train_iter': train_iter,
-            'train_loss': self.train_loss.avg,
-            'train_bleu': self.train_bleu.avg,
-            'bleu': val_bleu.avg                
-            }
-
-        for tag, value in info.items():
-            self.tf_log.scalar_summary(tag, value, (epoch * self.iter_per_epoch)+train_iter+1)
-
+            val_bleu = self.evaluate()
+            if val_bleu > self.best_bleu:
+                self.best_bleu = val_bleu
+                torch.save(self.model, 'models/model.pb')
+                patience = 0
+            else:
+                patience +=1
+            if patience > 3:
+                break
 
     def get_sentence(self, sentence, side):
         def _eos_parsing(sentence):
-            if EOS_WORD in sentence:
-                return sentence[:sentence.index(EOS_WORD)+1]
+            if '<EOS>' in sentence:
+                return sentence[:sentence.index('<EOS>')+1]
             else:
                 return sentence
 
-        # index sentence to word sentence                      
-        if side == 'trg':
-            sentence = [self.trg_inv_vocab[x] for x in sentence]
-        else:
-            sentence = [self.src_inv_vocab[x] for x in sentence]
+        # index sentence to word sentence
+        sentence = [self.dp.vocab.itos[s] for s in sentence]
 
         return _eos_parsing(sentence)
 
@@ -216,11 +234,11 @@ class Trainer(object):
         print (mode, '\n')
         self.logger.write(mode+'\n')
         self.sample.write(mode+'\n')
-        
+
         message = "Train epoch: %d  iter: %d  train loss: %1.3f  train bleu: %1.3f  elapsed: %1.3f " % (
         epoch, train_iter, self.train_loss.avg, self.train_bleu.avg, time.time() - start_time)
         print (message, '\n\n')
-        self.logger.write(message+'\n\n')   
+        self.logger.write(message+'\n\n')
 
 
     def print_valid_result(self, epoch, train_iter, val_bleu, start_time):
@@ -233,7 +251,7 @@ class Trainer(object):
         epoch, train_iter, self.train_loss.avg, self.train_bleu.avg, val_bleu, time.time() - start_time)
         print (message, '\n\n' )
         self.logger.write(message+'\n\n')
-        
+
 
     def print_sample(self, batch_size, epoch, train_iter, source, target, pred):
 

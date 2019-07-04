@@ -6,31 +6,43 @@ from utils import *
 
 
 class Encoder(nn.Module):
-    def __init__(self, vocab_size, embed_dim, hidden_dim, num_layers=2): 
-        super(Encoder, self).__init__()
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
-        
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
-        self.gru = nn.GRU(embed_dim, self.hidden_dim, self.num_layers, batch_first=True, bidirectional=True, )
-        
-    def forward(self, source, src_length=None, hidden=None):
-        '''
-        source: B x T 
-        '''
-        batch_size = source.size(0)
-        src_embed = self.embedding(source)
-        
-        if hidden is None:
-            h_size = (self.num_layers *2, batch_size, self.hidden_dim)
-            enc_h_0 = Variable(src_embed.data.new(*h_size).zero_(), requires_grad=False)
+    def __init__(self, input_dim, emb_dim, hid_dim, n_layers, dropout=0.5, no_langs=3):
+        super().__init__()
 
-        if src_length is not None:
-            src_embed = nn.utils.rnn.pack_padded_sequence(src_embed, src_length, batch_first=True)
+        self.input_dim = input_dim
+        self.emb_dim = emb_dim
+        self.hid_dim = hid_dim
+        self.n_layers = n_layers
+        self.dropout = dropout
+        self.M = nn.Parameter(torch.randn(hid_dim, hid_dim//2))
+        self.N = nn.Parameter(torch.randn(no_langs, hid_dim, hid_dim//2))
 
-        enc_h, enc_h_t = self.gru(src_embed, enc_h_0) 
+        self.embedding = nn.Embedding(input_dim, emb_dim)
 
-        if src_length is not None:
-            enc_h, _ = nn.utils.rnn.pad_packed_sequence(enc_h, batch_first=True)
+        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout = dropout)
 
-        return enc_h, enc_h_t
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src, src_lang):
+
+        #src = [src sent len, batch size]
+
+        embedded = self.dropout(self.embedding(src))
+
+        #embedded = [src sent len, batch size, emb dim]
+
+        outputs, (hidden, cell) = self.rnn(embedded)
+
+        sem_emb = torch.mm(hidden.squeeze(0), self.M)
+        # print(self.N[src_lang, :, :].size())
+        syn_emb = torch.bmm(hidden.squeeze(0).unsqueeze(1), self.N[src_lang, :, :]).squeeze(1)
+
+        hidden = torch.cat((sem_emb, syn_emb), dim=1).unsqueeze(0)
+
+        #outputs = [src sent len, batch size, hid dim * n directions]
+        #hidden = [n layers * n directions, batch size, hid dim]
+        #cell = [n layers * n directions, batch size, hid dim]
+
+        #outputs are always from the top hidden layer
+
+        return hidden, cell
