@@ -14,7 +14,8 @@ sed -i -e 's/^/fr /' training/europarl-v7.fr-en.fr
 sed -i -e 's/^/de /' training/europarl-v7.de-en.de
 sed -i -e 's/^/en /' training/europarl-v7.de-en.en
 cat training/europarl-v7.de-en.en training/europarl-v7.fr-en.en training/europarl-v7.de-en.de training/europarl-v7.fr-en.fr > training/train_all
-cat training/europarl-v7.de-en.de training/europarl-v7.fr-en.en > training/train.src
-cat training/europarl-v7.de-en.en training/europarl-v7.fr-en.fr > training/train.tgt
-
+cat training/europarl-v7.de-en.en training/europarl-v7.fr-en.en training/europarl-v7.fr-en.en> training/train.src
+cat training/europarl-v7.de-en.de training/europarl-v7.fr-en.fr training/europarl-v7.fr-en.en> training/train.tgt
+cat training/europarl-v7.fr-en.en> training/train.src
+cat training/europarl-v7.fr-en.en> training/train.tgt
 cd ..

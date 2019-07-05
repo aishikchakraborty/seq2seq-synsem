@@ -36,13 +36,14 @@ def main(args):
 	training_dataset = list(zip(dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng))
 	import random; random.seed(1234);
 	random.shuffle(training_dataset)
-	MAX_SAMPLES  = 400000
+	MAX_SAMPLES  =40040
 	dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = zip(*training_dataset)
 	dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = dp.train_src[:MAX_SAMPLES], dp.src_tgt[:MAX_SAMPLES], dp.train_srclng[:MAX_SAMPLES], dp.train_tgtlng[:MAX_SAMPLES]
 
 	print ("=========== Data Stat ===========")
 	print ("Train: ", len(dp.train_src))
 	print ("val: ", len(dp.val_tgt))
+	print ("val: ", len(set(dp.train_src_sentlen)))
 	print ("=================================")
 
 
@@ -59,9 +60,11 @@ if __name__ == '__main__':
 	parser.add_argument('--src-lang', action="append", type=str, default=[], dest='src_lang',
 	                    help='list of type of lexical relations to capture. Options | syn | hyp | mer')
 	parser.add_argument('--trg_lang', type=str, default='en')
-	parser.add_argument('--max_len', type=int, default=50)
+	parser.add_argument('--mode', type=str, default='probe', help='probe|train')
+	parser.add_argument('--max_len', type=int, default=20)
 	parser.add_argument('--cuda', action='store_true',
 	                    help='use CUDA')
+						
 	parser.add_argument('--gpu', type=int, default=0,
 	                    help='use gpu x')
 	parser.add_argument('--log-interval', type=int, default=100)
@@ -70,7 +73,7 @@ if __name__ == '__main__':
 	parser.add_argument('--grad_clip', type=float, default=2)
 	parser.add_argument('--num_layer', type=int, default=1)
 	parser.add_argument('--embed_dim',  type=int, default=300)
-	parser.add_argument('--hidden_dim', type=int, default=1024)
+	parser.add_argument('--hidden_dim', type=int, default=512)
 
 	# Training setting
 	parser.add_argument('--batch_size', type=int, default=40)

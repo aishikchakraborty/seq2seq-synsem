@@ -8,4 +8,4 @@
 #SBATCH --time=20:00:00
 #SBATCH --gres=gpu:1
 ###########################
-python -u main.py --cuda --num-epoch 8
+python -u main.py --cuda --num_epoch 8

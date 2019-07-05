@@ -1,4 +1,5 @@
 import torch
+import unicodedata
 from torchtext import data
 from torchtext import datasets
 import time
@@ -9,8 +10,10 @@ import _pickle as pickle
 from tqdm import tqdm
 from collections import Counter
 import collections
-
+import random
+random.seed(1234)
 import mmap
+import numpy as np
 
 def get_num_lines(file_path):
     fp = open(file_path, "r+")
@@ -31,6 +34,18 @@ def dd():
 def dd3():
     return 3
 
+def unicodeToAscii(s):
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
+
+def normalizeString(s):
+    s = unicodeToAscii(s.lower().strip())
+    s = re.sub(r"([.!?])", r" \1", s)
+    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+    return s
+
 class Vocab():
     def __init__(self, max_vocab=60000):
         self.stoi = {}
@@ -46,7 +61,7 @@ class Vocab():
         v = []
         f = open(all_translation_files_path, 'r')
         for lines in f:
-            lines = lines.split()
+            lines = normalizeString(lines).split()
             v.extend(lines)
         v = Counter(v).most_common(self.max_vocab)
         # print(v)
@@ -79,16 +94,41 @@ class Preprocess():
         self.val_srclng = []
         self.val_tgtlng = []
 
+        self.train_src_sentlen = []
+        self.train_tgt_sentlen = []
+        self.train_word_pair = []
+        self.train_word_pair_y = []
 
+        self.val_src_sentlen = []
+        self.val_tgt_sentlen = []
+        self.val_word_pair = []
+        self.val_word_pair_y = []
 
     def preprocess_train(self):
         with open(self.train_src_file) as fsrc, open(self.train_tgt_file) as ftgt:
             for src_line, tgt_line in tqdm(zip(fsrc, ftgt), total=get_num_lines(self.train_src_file)):
-                src_line, tgt_line = src_line.split(), tgt_line.split()
+                src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
                 src_line = src_line + ['<EOS>']
                 tgt_line = tgt_line + ['<EOS>']
-                src_seq = [self.vocab.stoi[w] for w in src_line][:self.max_len]
-                tgt_seq = [self.vocab.stoi[w] for w in tgt_line][:self.max_len]
+                src_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + src_line[1:]][:self.max_len]
+                tgt_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + tgt_line[1:]][:self.max_len]
+                if len(src_seq)<5 or len(tgt_seq)<5:
+                    continue
+
+                self.train_src_sentlen.append((len(src_seq)-2)//15)
+                self.train_tgt_sentlen.append((len(tgt_seq)-2)//15)
+
+                x1 = range(1, len(src_seq)-2)
+                # print(x1)
+                src_words_idx = random.sample(x1, 2)
+
+
+                if random.random() < 0.5:
+                    self.train_word_pair.append([src_seq[src_words_idx[1]], src_seq[src_words_idx[0]]])
+                    self.train_word_pair_y.append(0)
+                else:
+                    self.train_word_pair.append([src_seq[src_words_idx[0]], src_seq[src_words_idx[1]]])
+                    self.train_word_pair_y.append(1)
 
                 self.train_src.append(src_seq)
                 self.train_tgt.append(tgt_seq)
@@ -99,11 +139,27 @@ class Preprocess():
     def preprocess_val(self):
         with open(self.val_src_file) as fsrc, open(self.val_tgt_file) as ftgt:
             for src_line, tgt_line in tqdm(zip(fsrc, ftgt), total=get_num_lines(self.val_src_file)):
-                src_line, tgt_line = src_line.split(), tgt_line.split()
+                src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
                 src_line = src_line + ['<EOS>']
                 tgt_line = tgt_line + ['<EOS>']
-                src_seq = [self.vocab.stoi[w] for w in src_line][:self.max_len]
-                tgt_seq = [self.vocab.stoi[w] for w in tgt_line][:self.max_len]
+
+                src_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + src_line[1:]][:self.max_len]
+                tgt_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + tgt_line[1:]][:self.max_len]
+
+                if len(src_seq)<5 or len(tgt_seq)<5:
+                    continue
+                self.val_src_sentlen.append((len(src_seq)-2)//15)
+                self.val_tgt_sentlen.append((len(tgt_seq)-2)//15)
+                x1 = range(1, len(src_seq)-2)
+                src_words_idx = random.sample(x1, 2)
+
+
+                if random.random() < 0.5:
+                    self.val_word_pair.append([src_seq[src_words_idx[1]], src_seq[src_words_idx[0]]])
+                    self.val_word_pair_y.append(0)
+                else:
+                    self.val_word_pair.append([src_seq[src_words_idx[0]], src_seq[src_words_idx[1]]])
+                    self.val_word_pair_y.append(1)
 
                 self.val_src.append(src_seq)
                 self.val_tgt.append(tgt_seq)

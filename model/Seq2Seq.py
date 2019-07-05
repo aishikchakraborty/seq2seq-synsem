@@ -6,6 +6,13 @@ import numpy as np
 from utils import *
 from model import *
 
+def detach_hidden(h):
+    """Wraps hidden states in new Tensors, to detach them from their history."""
+    if isinstance(h, torch.Tensor):
+        return h.detach()
+    else:
+        return tuple(repackage_hidden(v) for v in h)
+
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, device, nout, cutoffs=[1000, 10000]):
         super().__init__()
@@ -13,6 +20,8 @@ class Seq2Seq(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.device = device
+
+        self.decoder.embedding.weight = self.encoder.embedding.weight
 
 
         # self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(nout, nout, cutoffs=cutoffs)
@@ -22,7 +31,7 @@ class Seq2Seq(nn.Module):
         assert encoder.n_layers == decoder.n_layers, \
             "Encoder and decoder must have equal number of layers!"
 
-    def forward(self, src, trg, lng, teacher_forcing_ratio = 0.5):
+    def forward(self, src, trg, tgtlng, teacher_forcing_ratio = 0.5):
 
         #src = [src sent len, batch size]
         #trg = [trg sent len, batch size]
@@ -37,17 +46,22 @@ class Seq2Seq(nn.Module):
         outputs = torch.zeros(max_len, batch_size, trg_vocab_size).to(self.device)
 
         #last hidden state of the encoder is used as the initial hidden state of the decoder
-        hidden, cell = self.encoder(src, lng)
+        hidden, cell, sem_emb = self.encoder(src)
+        syn_emb = torch.bmm(hidden.unsqueeze(1), self.encoder.N[tgtlng, :, :]).squeeze(1)
 
+
+        start_state = torch.cat((sem_emb, syn_emb), dim=1).unsqueeze(0)
+        hidden = start_state
         #first input to the decoder is the <sos> tokens
         input = trg[0,:]
 
         for t in range(1, max_len):
 
-            output, hidden, cell = self.decoder(input, hidden, cell)
+            output, hidden, cell = self.decoder(input, hidden, cell, start_state)
             outputs[t] = output
             teacher_force = random.random() < teacher_forcing_ratio
-            top1 = output.max(1)[1]
+            top1 = output.max(1)[1].detach()
             input = (trg[t] if teacher_force else top1)
+            detach_hidden(hidden)
 
         return outputs

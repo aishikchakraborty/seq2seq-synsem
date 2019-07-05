@@ -18,15 +18,13 @@ class Decoder(nn.Module):
 
         self.embedding = nn.Embedding(output_dim, emb_dim)
 
-        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout = dropout)
+        self.rnn = nn.LSTM(emb_dim+2*hid_dim, 2*hid_dim, n_layers, dropout = dropout)
 
-        self.out = nn.Linear(hid_dim, output_dim)
-
-        self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(hid_dim, output_dim, cutoffs=[1000,10000])
+        self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(2*hid_dim, output_dim, cutoffs=[1000,10000])
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, input, hidden, cell):
+    def forward(self, input, hidden, cell, start_state):
 
         #input = [batch size]
         #hidden = [n layers * n directions, batch size, hid dim]
@@ -40,10 +38,12 @@ class Decoder(nn.Module):
 
         #input = [1, batch size]
 
-        embedded = self.dropout(self.embedding(input))
+        embedded = self.dropout(torch.cat((self.embedding(input), start_state), dim=2))
+
+
 
         #embedded = [1, batch size, emb dim]
-
+        # print(hidden.size())
         output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
 
         #output = [sent len, batch size, hid dim * n directions]
@@ -56,6 +56,7 @@ class Decoder(nn.Module):
         #cell = [n layers, batch size, hid dim]
 
         # prediction = self.out(output.squeeze(0))
+        # print(output.size())
         prediction = self.adaptive_softmax.log_prob(output.squeeze(0))
         #prediction = [batch size, output dim]
 
