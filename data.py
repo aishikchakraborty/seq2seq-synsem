@@ -47,7 +47,7 @@ def normalizeString(s):
     return s
 
 class Vocab():
-    def __init__(self, max_vocab=60000):
+    def __init__(self, max_vocab=10000):
         self.stoi = {}
         self.itos = []
         self.itos.append(SOS_WORD)
@@ -61,10 +61,12 @@ class Vocab():
         v = []
         f = open(all_translation_files_path, 'r')
         for lines in f:
-            lines = normalizeString(lines).split()
+            # lines = normalizeString(lines).split()
+            lines = (lines).split()
+            # print(lines)
             v.extend(lines)
         v = Counter(v).most_common(self.max_vocab)
-        # print(v)
+        print('10 most common words: ' + str(v[:10]))
         v = [w[0] for w in v]
         self.itos.extend(v)
         self.stoi = collections.defaultdict(dd3, {v:k for k,v in enumerate(self.itos)})
@@ -80,7 +82,7 @@ class Preprocess():
         self.val_tgt_file = val_tgt_file
         self.max_len = max_len
 
-        self.lang2idx = {'en':0, 'fr':1, 'de':2}
+        self.lang2idx = {'en':0, 'fr':1, 'de':2, 'sos':3}
 
         self.vocab = Vocab()
         self.vocab.create_vocab_for_translation(vocab_generation_file)
@@ -107,11 +109,17 @@ class Preprocess():
     def preprocess_train(self):
         with open(self.train_src_file) as fsrc, open(self.train_tgt_file) as ftgt:
             for src_line, tgt_line in tqdm(zip(fsrc, ftgt), total=get_num_lines(self.train_src_file)):
-                src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
+                # src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
+                src_line, tgt_line = (src_line).split(), (tgt_line).split()
+                # print(src_line);print(tgt_line);
                 src_line = src_line + ['<EOS>']
                 tgt_line = tgt_line + ['<EOS>']
                 src_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + src_line[1:]][:self.max_len]
                 tgt_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + tgt_line[1:]][:self.max_len]
+                # print(src_seq);print(tgt_seq);
+                # print(self.vocab.itos);break;
+
+
                 if len(src_seq)<5 or len(tgt_seq)<5:
                     continue
 
@@ -139,7 +147,8 @@ class Preprocess():
     def preprocess_val(self):
         with open(self.val_src_file) as fsrc, open(self.val_tgt_file) as ftgt:
             for src_line, tgt_line in tqdm(zip(fsrc, ftgt), total=get_num_lines(self.val_src_file)):
-                src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
+                # src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
+                src_line, tgt_line = (src_line).split(), (tgt_line).split()
                 src_line = src_line + ['<EOS>']
                 tgt_line = tgt_line + ['<EOS>']
 

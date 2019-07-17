@@ -33,13 +33,19 @@ def main(args):
 
 	print ("Elapsed Time: %1.3f \n"  %(time.time() - start_time))
 
-	training_dataset = list(zip(dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng))
-	import random; random.seed(1234);
-	random.shuffle(training_dataset)
-	MAX_SAMPLES  =40040
-	dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = zip(*training_dataset)
-	dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = dp.train_src[:MAX_SAMPLES], dp.src_tgt[:MAX_SAMPLES], dp.train_srclng[:MAX_SAMPLES], dp.train_tgtlng[:MAX_SAMPLES]
+	# print(dp.vocab.itos)
+	# print(dp.train_src[0])
+	# print(dp.train_tgt[0])
+	# training_dataset = list(zip(dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng))
+	# import random; random.seed(1234);
+	# random.shuffle(training_dataset)
+	MAX_SAMPLES = 40040
+	# dp.train_src[:], dp.train_tgt[:], dp.train_srclng[:], dp.train_tgtlng[:] = zip(*training_dataset)
+	dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng = dp.train_src[:MAX_SAMPLES], dp.train_tgt[:MAX_SAMPLES], dp.train_srclng[:MAX_SAMPLES], dp.train_tgtlng[:MAX_SAMPLES]
 
+	print(dp.vocab.itos)
+	print(dp.train_src[0])
+	print(dp.train_tgt[0])
 	print ("=========== Data Stat ===========")
 	print ("Train: ", len(dp.train_src))
 	print ("val: ", len(dp.val_tgt))
@@ -64,19 +70,19 @@ if __name__ == '__main__':
 	parser.add_argument('--max_len', type=int, default=20)
 	parser.add_argument('--cuda', action='store_true',
 	                    help='use CUDA')
-						
+
 	parser.add_argument('--gpu', type=int, default=0,
 	                    help='use gpu x')
 	parser.add_argument('--log-interval', type=int, default=100)
 	# Model hyper-parameters
 	parser.add_argument('--lr', type=float, default=0.001)
-	parser.add_argument('--grad_clip', type=float, default=2)
-	parser.add_argument('--num_layer', type=int, default=1)
-	parser.add_argument('--embed_dim',  type=int, default=300)
-	parser.add_argument('--hidden_dim', type=int, default=512)
+	parser.add_argument('--grad_clip', type=float, default=1)
+	parser.add_argument('--num_layer', type=int, default=2)
+	parser.add_argument('--embed_dim',  type=int, default=32)
+	parser.add_argument('--hidden_dim', type=int, default=64)
 
 	# Training setting
-	parser.add_argument('--batch_size', type=int, default=40)
+	parser.add_argument('--batch_size', type=int, default=32)
 	parser.add_argument('--num_epoch', type=int, default=100)
 
 	# Path
