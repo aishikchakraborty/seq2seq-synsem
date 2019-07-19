@@ -168,7 +168,8 @@ class Trainer(object):
             self.probe = ProbingTasks(self.encoder, self.hidden_dim, 4, 2, True).to(self.device)
 
         # set the criterion and optimizer
-        self.criterion = LabelSmoothing(len(self.dp.vocab.itos), self.dp.vocab.stoi['<PAD>'], 0.0)
+        # self.criterion = LabelSmoothing(len(self.dp.vocab.itos), self.dp.vocab.stoi['<PAD>'], 0.0)
+        self.criterion = nn.NLLLoss(ignore_index=self.dp.vocab.stoi['<PAD>'])
         self.criterion_ppl = nn.NLLLoss(ignore_index=self.dp.vocab.stoi['<PAD>'])
         self.criterion2 = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(list(self.model.parameters()) + list(self.probe.parameters()), lr=self.lr)
@@ -231,13 +232,14 @@ class Trainer(object):
                 word_pairs_y = torch.LongTensor(word_pairs_y).to(self.device)
 
 
-                output, logits = self.greedy_decode(self.model, src, src.size(0), self.dp.vocab.stoi['<SOS>'])
+                output, logits = self.greedy_decode(self.model, src, tgt[1:, :].size(0), self.dp.vocab.stoi['<SOS>'])
                 # sentlen_out, wp_out = self.probe(src, lng, word_pairs)
                 # loss_syn1 = self.criterion2(sentlen_out, sentlen)
                 # loss_syn2 = self.criterion2(wp_out, word_pairs_y)
 
                 output_ = logits.view(-1, logits.shape[-1])
                 # print(tgt[1:, :].size())
+                # print(logits.size())
                 tgt_ = (tgt[1:, :]).contiguous().view(-1)
                 loss = self.criterion(output_, tgt_)
                 # loss /= (output.size(0)*output.size(1))
