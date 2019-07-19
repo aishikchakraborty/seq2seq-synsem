@@ -187,17 +187,20 @@ class Trainer(object):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     def greedy_decode(self, model, src, max_len, start_symbol):
-        # memory = model.encoder(src)
-        ys = (torch.ones(1, src.size(1)) * start_symbol).type_as(src.data)
-        probs = torch.FloatTensor(torch.zeros(max_len, src.size(1), len(self.dp.vocab.itos))).to(self.device)
-        for i in range(max_len-1):
-            prob = model(src, ys, 0)
-            _, next_word = torch.max(prob[-1, :, :].squeeze(0), dim=-1)
-            next_word = next_word.data[0]
-            probs[i] = prob[-1, :, :].squeeze(0)
-            ys = torch.cat([ys,
-                            torch.ones(1, src.size(1)).type_as(src.data)*next_word], dim=0)
-        return ys, probs
+        with torch.no_grad():
+            # memory = model.encoder(src)
+            ys = (torch.ones(1, src.size(1)) * start_symbol).type_as(src.data)
+            probs = torch.FloatTensor(torch.zeros(max_len, src.size(1), len(self.dp.vocab.itos))).to(self.device)
+            for i in range(max_len):
+                prob = model(src, ys, 0)
+                _, next_word = torch.max(prob[-1, :, :], dim=-1)
+                # print(next_word.size())
+                next_word = next_word.data
+                # print(next_word)
+                probs[i] = prob[-1, :, :]
+                ys = torch.cat([ys,
+                                torch.ones(1, src.size(1)).type_as(src.data)*next_word], dim=0)
+            return ys, probs
 
     def evaluate(self):
         self.model.eval()
@@ -212,6 +215,7 @@ class Trainer(object):
         pred = []
         with torch.no_grad():
             for i in range(num_batches):
+                # hidden = self.model.encoder.init_hidden(self.args.batch_size)
                 src = self.pad_sequences(self.dp.val_src[i*self.args.batch_size : (i+1)*self.args.batch_size])
                 tgt = self.pad_sequences(self.dp.val_tgt[i*self.args.batch_size : (i+1)*self.args.batch_size])
                 lng = self.dp.val_tgtlng[i*self.args.batch_size : (i+1)*self.args.batch_size]
@@ -232,7 +236,7 @@ class Trainer(object):
                 # loss_syn1 = self.criterion2(sentlen_out, sentlen)
                 # loss_syn2 = self.criterion2(wp_out, word_pairs_y)
 
-                output_ = logits[:-1, :, :].view(-1, logits.shape[-1])
+                output_ = logits.view(-1, logits.shape[-1])
                 # print(tgt[1:, :].size())
                 tgt_ = (tgt[1:, :]).contiguous().view(-1)
                 loss = self.criterion(output_, tgt_)
@@ -244,12 +248,14 @@ class Trainer(object):
 
                 pred_sents = []
                 trg_sents = []
-                output = output.transpose(0, 1)
+                output = output[:].transpose(0, 1)
                 tgt = tgt.transpose(0, 1)
+                # print(output.size())
+                # print(tgt.size())
 
                 for j in range(self.args.batch_size):
                     # print(output.size())
-                    pred_sent = self.get_sentence(output[j, :-1].data.cpu().numpy().tolist(), 'tgt')
+                    pred_sent = self.get_sentence(output[j, 1:].data.cpu().numpy().tolist(), 'tgt')
                     trg_sent = self.get_sentence(tgt[j, 1:].data.cpu().numpy().tolist(), 'tgt')
                     pred_sents.append(pred_sent)
                     trg_sents.append(trg_sent)
@@ -282,7 +288,7 @@ class Trainer(object):
 
             for i in tqdm(range(num_batches)):
                 self.model.train()
-
+                # hidden = self.model.encoder.init_hidden(self.args.batch_size)
                 src = self.pad_sequences(self.dp.train_src[i*self.args.batch_size : (i+1)*self.args.batch_size])
                 tgt = self.pad_sequences(self.dp.train_tgt[i*self.args.batch_size : (i+1)*self.args.batch_size])
                 tgtlng = self.dp.train_tgtlng[i*self.args.batch_size : (i+1)*self.args.batch_size]
@@ -294,6 +300,7 @@ class Trainer(object):
                 # import pdb; pdb.set_trace();
                 src = torch.LongTensor(src).to(self.device).transpose(0, 1)
                 tgt = torch.LongTensor(tgt).to(self.device).transpose(0, 1)
+
                 tgtlng = torch.LongTensor(tgtlng).to(self.device)
                 srclng = torch.LongTensor(srclng).to(self.device)
                 sentlen = torch.LongTensor(sentlen).to(self.device)
@@ -301,6 +308,13 @@ class Trainer(object):
                 word_pairs_y = torch.LongTensor(word_pairs_y).to(self.device)
                 # print(src.size())
                 self.optimizer.zero_grad()
+                self.model.zero_grad()
+                self.encoder.zero_grad()
+                self.decoder.zero_grad()
+                # print(src[:, 0])
+                # print(tgt[:, 0])
+                # print(tgt[:-1, 0])
+                # print(tgt[1:, 0])
                 output = self.model(src, tgt[:-1, :], tgtlng)
 
                 # sentlen_out, wp_out = self.probe(src, srclng, word_pairs)
@@ -310,7 +324,8 @@ class Trainer(object):
                 # loss_syn = loss_syn1 + loss_syn2
 
                 output_ = output.view(-1, output.shape[-1])
-
+                # print(output.size())
+                # print(tgt.size())
                 # print(tgt[1:, :].size())
                 tgt_ = (tgt[1:, :]).contiguous().view(-1)
 
@@ -323,7 +338,7 @@ class Trainer(object):
                     loss = loss + loss_syn
 
                 loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
                 self.optimizer.step()
                 self.train_loss += loss.item()
@@ -342,7 +357,7 @@ class Trainer(object):
                 tgt = tgt.transpose(0, 1)
 
                 for j in range(self.args.batch_size):
-                    pred_sent = self.get_sentence(output[j, :-1].data.cpu().numpy().argmax(axis=-1).tolist(), 'tgt')
+                    pred_sent = self.get_sentence(output[j].data.cpu().numpy().argmax(axis=-1).tolist(), 'tgt')
                     trg_sent = self.get_sentence(tgt[j, 1:].data.cpu().numpy().tolist(), 'tgt')
                     pred_sents.append(pred_sent)
                     trg_sents.append(trg_sent)
@@ -372,10 +387,10 @@ class Trainer(object):
 
     def get_sentence(self, sentence, side):
         def _eos_parsing(sentence):
-            if '<EOS>' in sentence:
-                return sentence[:sentence.index('<EOS>')+1]
-            else:
-                return sentence
+            # if '<EOS>' in sentence:
+            #     return sentence[:sentence.index('<EOS>')+1]
+            # else:
+            return sentence
 
         # index sentence to word sentence
         sentence = [self.dp.vocab.itos[s] for s in sentence]

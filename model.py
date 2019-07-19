@@ -98,9 +98,9 @@ class Encoder(nn.Module):
         # we need to manually concatenate the final states for both directions
         fwd_final = final[0:final.size(0):2]
         bwd_final = final[1:final.size(0):2]
-        final = torch.cat([fwd_final, bwd_final], dim=2)  # [num_layers, batch, 2*dim]
+        hidden = torch.cat([fwd_final, bwd_final], dim=2)  # [num_layers, batch, 2*dim]
 
-        return output, final
+        return output, hidden
 
 
 # ### Decoder

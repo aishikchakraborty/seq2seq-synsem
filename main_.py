@@ -57,7 +57,7 @@ class Batch:
     """Object for holding a batch of data with mask during training.
     Input is a batch from a torch text iterator.
     """
-    def __init__(self, src, trg, pad_index=0):
+    def __init__(self, src, trg, pad_index=100):
 
         src, src_lengths = src
 
@@ -74,9 +74,9 @@ class Batch:
 
         if trg is not None:
             trg, trg_lengths = trg
-            self.trg = trg
+            self.trg = trg[:, :-1]
             self.trg_lengths = trg_lengths
-            self.trg_y = trg
+            self.trg_y = trg[:, 1:]
             self.trg_mask = (self.trg_y != pad_index)
             self.ntokens = (self.trg_y != pad_index).data.sum().item()
 
@@ -88,6 +88,7 @@ class Batch:
                 self.trg = self.trg.cuda()
                 self.trg_y = self.trg_y.cuda()
                 self.trg_mask = self.trg_mask.cuda()
+
 
 
 
@@ -156,18 +157,15 @@ def pad_sequences(s, dp, batch_size):
         padded_X[i, 0:x_len] = sequence[:x_len]
     if batch_size != 1:
         padded_X = padded_X[perm_idx]
+
     return padded_X, seq_lengths.data.cpu().numpy().tolist()
 
-def data_gen(num_words=11, batch_size=16, num_batches=100, length=10, pad_index=2, sos_index=1, mode='train'):
+
+def data_gen(num_words=11, batch_size=16, num_batches=100, length=10, pad_index=100, sos_index=1, mode='train'):
     """Generate random data for a src-tgt copy task."""
     # training_dataset = list(zip(dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng))
-    training_dataset = list(zip(dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng))
-    import random; random.seed(1234);
-    random.shuffle(training_dataset)
     MAX_SAMPLES = 40040
-    dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = zip(*training_dataset)
-    dp.train_src, dp.src_tgt, dp.train_srclng, dp.train_tgtlng = dp.train_src[:MAX_SAMPLES], dp.src_tgt[:MAX_SAMPLES], dp.train_srclng[:MAX_SAMPLES], dp.train_tgtlng[:MAX_SAMPLES]
-
+    dp.train_src, dp.train_tgt, dp.train_srclng, dp.train_tgtlng = dp.train_src[:MAX_SAMPLES], dp.train_tgt[:MAX_SAMPLES], dp.train_srclng[:MAX_SAMPLES], dp.train_tgtlng[:MAX_SAMPLES]
     if mode == 'train':
         len_src = [len(w) for w in dp.train_src]
         len_tgt = [len(w) for w in dp.train_tgt]
@@ -181,8 +179,8 @@ def data_gen(num_words=11, batch_size=16, num_batches=100, length=10, pad_index=
             # tgt_lengths = len_tgt[i*batch_size : (i+1)*batch_size]
 
             # print(src_lengths)
-            src = torch.LongTensor(src).to(DEVICE)
-            tgt = torch.LongTensor(tgt).to(DEVICE)
+            src = torch.LongTensor(src)
+            tgt = torch.LongTensor(tgt)
             # src_lengths = torch.LongTensor(src_lengths)
             # tgt_lengths = torch.LongTensor(tgt_lengths)
 
@@ -200,8 +198,8 @@ def data_gen(num_words=11, batch_size=16, num_batches=100, length=10, pad_index=
             # tgt_lengths = len_tgt[i*batch_size : (i+1)*batch_size]
 
             # print(src_lengths)
-            src = torch.LongTensor(src).to(DEVICE)
-            tgt = torch.LongTensor(tgt).to(DEVICE)
+            src = torch.LongTensor(src)
+            tgt = torch.LongTensor(tgt)
             # src_lengths = torch.LongTensor(src_lengths)
             # tgt_lengths = torch.LongTensor(tgt_lengths)
 
@@ -293,7 +291,7 @@ def lookup_words(x, vocab=None):
 # In[14]:
 
 
-def print_examples(example_iter, model, n=2, max_len=100,
+def print_examples(example_iter, model, n=2, max_len=11,
                    sos_index=1,
                    src_eos_index=None,
                    trg_eos_index=None,
@@ -345,7 +343,7 @@ def train_copy_task():
     """Train the simple copy task."""
     num_words = len(dp.vocab.itos)
     criterion = nn.NLLLoss(reduction="sum", ignore_index=0)
-    model = make_model(num_words, num_words, emb_size=32, hidden_size=64)
+    model = make_model(num_words, num_words, emb_size=32, hidden_size=512)
     optim = torch.optim.Adam(model.parameters(), lr=0.0003)
     eval_data = list(data_gen(num_words=num_words, batch_size=1, num_batches=100, mode='eval'))
 
@@ -371,7 +369,7 @@ def train_copy_task():
                                    SimpleLossCompute(model.generator, criterion, None))
             print("Evaluation perplexity: %f" % perplexity)
             dev_perplexities.append(perplexity)
-            print_examples(eval_data, model, n=2, max_len=50)
+            print_examples(eval_data, model, n=2, max_len=11)
 
     return dev_perplexities
 

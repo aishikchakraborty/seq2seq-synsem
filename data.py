@@ -112,9 +112,9 @@ class Preprocess():
                 # src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
                 src_line, tgt_line = (src_line).split(), (tgt_line).split()
                 # print(src_line);print(tgt_line);
-                src_line = src_line + ['<EOS>']
-                tgt_line = tgt_line + ['<EOS>']
-                src_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + src_line[1:]][:self.max_len]
+                src_line = src_line
+                tgt_line = tgt_line 
+                src_seq = [self.vocab.stoi[w] for w in src_line[1:]][:self.max_len]
                 tgt_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + tgt_line[1:]][:self.max_len]
                 # print(src_seq);print(tgt_seq);
                 # print(self.vocab.itos);break;
@@ -149,10 +149,10 @@ class Preprocess():
             for src_line, tgt_line in tqdm(zip(fsrc, ftgt), total=get_num_lines(self.val_src_file)):
                 # src_line, tgt_line = normalizeString(src_line).split(), normalizeString(tgt_line).split()
                 src_line, tgt_line = (src_line).split(), (tgt_line).split()
-                src_line = src_line + ['<EOS>']
-                tgt_line = tgt_line + ['<EOS>']
+                src_line = src_line
+                tgt_line = tgt_line
 
-                src_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + src_line[1:]][:self.max_len]
+                src_seq = [self.vocab.stoi[w] for w in src_line[1:]][:self.max_len]
                 tgt_seq = [self.vocab.stoi[w] for w in ['<SOS>'] + tgt_line[1:]][:self.max_len]
 
                 if len(src_seq)<5 or len(tgt_seq)<5:

@@ -79,7 +79,7 @@ if __name__ == '__main__':
 	parser.add_argument('--grad_clip', type=float, default=1)
 	parser.add_argument('--num_layer', type=int, default=2)
 	parser.add_argument('--embed_dim',  type=int, default=32)
-	parser.add_argument('--hidden_dim', type=int, default=64)
+	parser.add_argument('--hidden_dim', type=int, default=128)
 
 	# Training setting
 	parser.add_argument('--batch_size', type=int, default=32)

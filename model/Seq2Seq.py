@@ -67,7 +67,7 @@ class Seq2Seq(nn.Module):
         assert encoder.n_layers == decoder.n_layers, \
             "Encoder and decoder must have equal number of layers!"
 
-    def forward(self, src, trg, tgtlng, teacher_forcing_ratio = 0.8):
+    def forward(self, src, trg, tgtlng, teacher_forcing_ratio = 1.0):
 
         #src = [src sent len, batch size]
         #trg = [trg sent len, batch size]
@@ -82,22 +82,21 @@ class Seq2Seq(nn.Module):
         outputs = torch.zeros(max_len, batch_size, trg_vocab_size).to(self.device)
 
         #last hidden state of the encoder is used as the initial hidden state of the decoder
-        hidden, cell, sem_emb = self.encoder(src)
+        hidden, sem_emb = self.encoder(src)
         # syn_emb = torch.bmm(hidden.unsqueeze(1), self.encoder.N[tgtlng, :, :]).squeeze(1)
 
 
         # start_state = torch.cat((sem_emb, syn_emb), dim=1).unsqueeze(0)
-        start_state = hidden.unsqueeze(0)
-        hidden = start_state
+        start_state = hidden
+        # hidden = start_state
         #first input to the decoder is the <sos> tokens
         input = trg[0,:]
 
         for t in range(max_len):
-
-            output, hidden, cell = self.decoder(input, hidden, cell, start_state)
+            output, hidden = self.decoder(input, hidden, start_state)
             outputs[t] = output
             teacher_force = random.random() < teacher_forcing_ratio
-            top1 = output.max(1)[1].detach()
+            top1 = output.max(1)[1]
             input = (trg[t] if teacher_force else top1)
             detach_hidden(hidden)
 
